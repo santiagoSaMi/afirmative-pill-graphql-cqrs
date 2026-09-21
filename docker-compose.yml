@@ -1,0 +1,52 @@
+name: afirmative-pill
+
+# Toda la plataforma (API GraphQL + frontend) arranca con:  docker compose up --build
+# La base de datos es Supabase (PostgreSQL en la nube): configura DATABASE_URL en .env
+
+services:
+  backend:
+    build:
+      context: ./backend
+    init: true
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: ${DATABASE_URL:?Falta DATABASE_URL. Copia .env.example a .env y pega tu connection string de Supabase}
+      DATABASE_SSL: ${DATABASE_SSL:-true}
+      JWT_SECRET: ${JWT_SECRET:?Falta JWT_SECRET. Copia .env.example a .env (minimo 32 caracteres)}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      ENABLE_INTROSPECTION: ${ENABLE_INTROSPECTION:-true}
+      LOG_SQL: ${LOG_SQL:-true}
+      PROJECTION_DELAY_MS: ${PROJECTION_DELAY_MS:-1500}
+      REVIEW_DELAY_MS: ${REVIEW_DELAY_MS:-10000}
+      DISPATCH_DELAY_MS: ${DISPATCH_DELAY_MS:-15000}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      # El healthcheck tambien usa GraphQL: no existe ningun endpoint REST en la plataforma.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{__typename}'})}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 45s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # El navegador (no el contenedor) llama al backend: se usa localhost.
+        NEXT_PUBLIC_GRAPHQL_HTTP_URL: ${NEXT_PUBLIC_GRAPHQL_HTTP_URL:-http://localhost:4000/graphql}
+        NEXT_PUBLIC_GRAPHQL_WS_URL: ${NEXT_PUBLIC_GRAPHQL_WS_URL:-ws://localhost:4000/graphql}
+    init: true
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"

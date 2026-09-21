@@ -1,0 +1,318 @@
+# ════════════════════════════════════════════════════════════════════
+# Afirmative Pill · Schema SDL
+# Canal único cliente-servidor (Zero-REST). Segregación CQRS visible en el contrato:
+#   · type Query        -> modelos de lectura (proyecciones optimizadas)
+#   · type Mutation     -> comandos que expresan intención de negocio
+#   · type Subscription -> notificaciones de los cambios ya proyectados
+# ════════════════════════════════════════════════════════════════════
+
+"Fecha y hora ISO-8601 en UTC (p. ej. 2026-09-19T14:30:00.000Z)."
+scalar DateTime
+
+"Fecha calendario ISO-8601 sin zona horaria (YYYY-MM-DD)."
+scalar Date
+
+"Valor monetario en pesos colombianos (COP) con hasta dos decimales."
+scalar Money
+
+"Identificador UUID en formato canónico."
+scalar UUID
+
+# ─────────────────────────── Enums ───────────────────────────
+
+"Estado operacional de una orden."
+enum OrderStatus {
+  "Recibida; a la espera de validación (y de revisión de fórmula médica si aplica)."
+  PENDING_APPROVAL
+  "Validada por la farmacia; inventario reservado y lista para despachar."
+  APPROVED
+  "Entregada al operador logístico."
+  DISPATCHED
+  "Cancelada por el paciente o rechazada en la validación; el inventario se libera."
+  CANCELLED
+}
+
+enum StockStatus {
+  IN_STOCK
+  LOW_STOCK
+  OUT_OF_STOCK
+}
+
+enum MedicationSort {
+  NAME_ASC
+  PRICE_ASC
+  PRICE_DESC
+}
+
+"Códigos de error de dominio devueltos dentro de los payloads de las mutations."
+enum ErrorCode {
+  VALIDATION_ERROR
+  EMAIL_TAKEN
+  INVALID_CREDENTIALS
+  MEDICATION_NOT_FOUND
+  INSUFFICIENT_STOCK
+  PRESCRIPTION_REQUIRED
+  PRESCRIPTION_INVALID
+  ORDER_NOT_FOUND
+  INVALID_STATE_TRANSITION
+}
+
+# ─────────────────── Modelo de lectura: catálogo ───────────────────
+
+type Category {
+  id: ID!
+  name: String!
+  slug: String!
+}
+
+type Laboratory {
+  id: ID!
+  name: String!
+}
+
+"Ficha de medicamento. El cliente selecciona solo los campos que necesita (vista condensada o ficha completa)."
+type Medication {
+  id: ID!
+  sku: String!
+  name: String!
+  activeIngredient: String!
+  dosage: String!
+  presentation: String!
+  price: Money!
+  description: String!
+  requiresPrescription: Boolean!
+  stockStatus: StockStatus!
+  "Unidades disponibles según la proyección (eventualmente consistente con el inventario real)."
+  availableStock: Int!
+  "Resuelto por lotes con DataLoader (sin N+1)."
+  category: Category!
+  "Resuelto por lotes con DataLoader (sin N+1)."
+  laboratory: Laboratory!
+  updatedAt: DateTime!
+}
+
+input MedicationFilter {
+  "Texto libre sobre nombre comercial, principio activo, categoría y laboratorio (sin tildes ni mayúsculas)."
+  search: String
+  "Nombre comercial."
+  name: String
+  "Principio activo."
+  activeIngredient: String
+  "Categorías terapéuticas (OR entre ellas)."
+  categoryIds: [ID!]
+  requiresPrescription: Boolean
+  inStockOnly: Boolean
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+type MedicationEdge {
+  cursor: String!
+  node: Medication!
+}
+
+type MedicationConnection {
+  edges: [MedicationEdge!]!
+  pageInfo: PageInfo!
+  "Solo se calcula si el cliente lo solicita."
+  totalCount: Int!
+}
+
+type CategoryFacet {
+  category: Category!
+  count: Int!
+}
+
+"Facetas de búsqueda (conteos por categoría y por requisito de fórmula) para el filtro actual."
+type CatalogFacets {
+  categories: [CategoryFacet!]!
+  prescriptionRequired: Int!
+  overTheCounter: Int!
+}
+
+# ─────────────────── Modelo de lectura: órdenes ───────────────────
+
+type OrderItem {
+  medicationId: ID!
+  medicationName: String!
+  quantity: Int!
+  unitPrice: Money!
+  lineTotal: Money!
+  "Medicamento actual del catálogo (DataLoader por lote)."
+  medication: Medication
+}
+
+type Prescription {
+  prescriptionNumber: String!
+  doctorName: String!
+  doctorLicense: String!
+  issuedAt: Date!
+}
+
+type StatusChange {
+  status: OrderStatus!
+  reason: String
+  occurredAt: DateTime!
+}
+
+"Proyección de la orden optimizada para lectura."
+type Order {
+  id: UUID!
+  status: OrderStatus!
+  total: Money!
+  itemCount: Int!
+  requiresPrescription: Boolean!
+  cancelReason: String
+  placedAt: DateTime!
+  updatedAt: DateTime!
+  items: [OrderItem!]!
+  prescription: Prescription
+  statusHistory: [StatusChange!]!
+}
+
+type OrderEdge {
+  cursor: String!
+  node: Order!
+}
+
+type OrderConnection {
+  edges: [OrderEdge!]!
+  pageInfo: PageInfo!
+}
+
+# ─────────────────────── Identidad ───────────────────────
+
+type User {
+  id: UUID!
+  email: String!
+  fullName: String!
+}
+
+# ──────────────── Errores de dominio y payloads ────────────────
+
+"Error de validación o de regla de negocio. Las mutations lo devuelven en `errors` en lugar de lanzar excepciones."
+type DomainError {
+  code: ErrorCode!
+  message: String!
+  "Ruta del campo del input afectado (p. ej. prescription.doctorLicense)."
+  field: String
+  medicationId: ID
+  requested: Int
+  available: Int
+}
+
+type AuthPayload {
+  token: String
+  user: User
+  errors: [DomainError!]!
+}
+
+"Acuse del comando. La proyección de la orden puede tardar unos instantes en estar disponible (consistencia eventual)."
+type OrderReceipt {
+  orderId: UUID!
+  status: OrderStatus!
+  total: Money!
+  itemCount: Int!
+  requiresPrescription: Boolean!
+  placedAt: DateTime!
+}
+
+type PlaceOrderPayload {
+  receipt: OrderReceipt
+  errors: [DomainError!]!
+}
+
+type CancelOrderPayload {
+  receipt: OrderReceipt
+  errors: [DomainError!]!
+}
+
+# ───────────────────────── Inputs ─────────────────────────
+
+input RegisterInput {
+  email: String!
+  fullName: String!
+  password: String!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+input OrderItemInput {
+  medicationId: ID!
+  quantity: Int!
+}
+
+"Soporte de la fórmula médica. Obligatorio si algún ítem tiene requiresPrescription = true."
+input PrescriptionInput {
+  prescriptionNumber: String!
+  doctorName: String!
+  doctorLicense: String!
+  issuedAt: Date!
+  notes: String
+}
+
+input PlaceOrderInput {
+  items: [OrderItemInput!]!
+  prescription: PrescriptionInput
+  "Clave de idempotencia: reintentar con la misma clave no duplica la orden ni el descuento de stock."
+  idempotencyKey: String
+}
+
+input CancelOrderInput {
+  orderId: UUID!
+  reason: String
+}
+
+# ─────────────────── Operaciones raíz ───────────────────
+
+type Query {
+  "Paciente autenticado (claims del JWT) o null."
+  me: User
+
+  "Búsqueda facetada de medicamentos con paginación por cursor (keyset)."
+  medications(
+    filter: MedicationFilter
+    sort: MedicationSort = NAME_ASC
+    first: Int = 12
+    after: String
+  ): MedicationConnection!
+
+  "Ficha detallada de un medicamento."
+  medication(id: ID!): Medication
+
+  "Conteos por categoría y requisito de fórmula (la faceta de categoría ignora su propio filtro)."
+  catalogFacets(filter: MedicationFilter): CatalogFacets!
+
+  "Proyección de una orden del paciente autenticado. Devuelve null si aún no se proyectó o no existe."
+  order(id: UUID!): Order
+
+  "Órdenes del paciente autenticado, de la más reciente a la más antigua."
+  myOrders(first: Int = 10, after: String): OrderConnection!
+}
+
+type Mutation {
+  "Comando: registrar un paciente."
+  register(input: RegisterInput!): AuthPayload!
+
+  "Comando: iniciar sesión."
+  login(input: LoginInput!): AuthPayload!
+
+  "Comando: emitir un pedido. Valida fórmula médica y stock, reserva inventario de forma atómica."
+  placeOrder(input: PlaceOrderInput!): PlaceOrderPayload!
+
+  "Comando: cancelar un pedido (solo PENDING_APPROVAL o APPROVED). Libera el inventario reservado."
+  cancelOrder(input: CancelOrderInput!): CancelOrderPayload!
+}
+
+type Subscription {
+  "Emite la proyección actualizada de la orden cada vez que cambia su estado."
+  orderStatusChanged(orderId: UUID!): Order!
+}
