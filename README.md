@@ -31,10 +31,6 @@ docker compose up --build
 
 En el **primer arranque** el backend, de forma idempotente: aplica las migraciones (schemas `cmd`/`qry`), carga los **50 medicamentos** del dataset (27 requieren fórmula, 14 categorías, 16 laboratorios) y construye la proyección de catálogo. No hay que ejecutar SQL a mano.
 
-> **Sobre la conexión a Supabase.** Usa el *Session pooler* (puerto 5432): la conexión directa `db.<ref>.supabase.co` suele resolver solo por IPv6 y muchos entornos Docker no lo tienen. Si tu contraseña contiene `@ : / # ? %`, codifícala (URL-encode) dentro de la URL.
->
-> Los schemas `cmd` y `qry` no están expuestos por la Data API (PostgREST) de Supabase (que solo publica `public`), y además tienen RLS activo: la base de datos tampoco abre un canal REST.
-
 ---
 
 ## 2. Arquitectura
@@ -80,21 +76,21 @@ sequenceDiagram
   participant W as cmd (write)
   participant P as Projector
   participant R as qry (read)
-
+ 
   C->>A: mutation placeOrder(items, prescription, idempotencyKey)
-  A->>W: BEGIN; SELECT ... FOR UPDATE (stock, fórmula)
-  A->>W: descuenta stock, inserta orden + evento OrderPlaced (outbox); COMMIT
-  A-->>C: receipt { orderId, PENDING_APPROVAL, total }
+  A->>W: BEGIN y SELECT ... FOR UPDATE sobre stock y fórmula
+  A->>W: descuenta stock, inserta orden y evento OrderPlaced en outbox, luego COMMIT
+  A-->>C: receipt con orderId, estado PENDING_APPROVAL y total
   Note over C: query order(id) aún devuelve null<br/>(la proyección no existe todavía)
   C->>A: query order(id) cada 1.5 s + subscription orderStatusChanged
   P->>W: lee outbox (con retraso configurable)
-  P->>R: crea order_views, items, historial; COMMIT
+  P->>R: crea order_views, items e historial, luego COMMIT
   P-->>A: publica en PubSub (solo tras el COMMIT)
   A-->>C: query order(id) responde con datos
   Note over W,R: Un worker mueve la orden PENDING_APPROVAL, APPROVED, DISPATCHED<br/>y cada cambio vuelve a fluir por outbox, proyector y subscription
-  A-->>C: subscription: order { status: APPROVED }
+  A-->>C: subscription entrega la orden con status APPROVED
 ```
-
+ 
 ---
 
 ## 3. Cómo se cumple cada criterio de la rúbrica
@@ -520,17 +516,9 @@ SQL   [sql] 0.8ms rows=8 SELECT id, name FROM qry.laboratories WHERE id = ANY($1
 
 ---
 
-## 8. Guion sugerido para el video (5 a 8 min)
+## 8. Video demostrativo
 
-1. **Arranque** (`docker compose up`) y logs del backend: migraciones, seed, proyector y worker.
-2. **Navegación y filtros:** buscar `acetaminofen` (sin tilde), filtrar por categoría y por "Fórmula", ordenar, "Mostrar más".
-3. **DevTools > Network > Fetch/XHR:** todas las llamadas son `POST /graphql`; abrir una y mostrar que el payload solo pide los campos de la tarjeta (sin over-fetching). En *WS* se ve la conexión de la Subscription. (Los archivos `/_next/static/*` son los assets del frontend, no llamadas de API.)
-4. **Logs del servidor con DataLoader:** repetir la búsqueda y mostrar los `[dataloader] ... load() -> 1 consulta SQL`.
-5. **Pedido con fórmula:** carrito con un medicamento de venta libre y uno con fórmula, confirmar con el formulario de fórmula vacío (el servidor responde `PRESCRIPTION_REQUIRED`), luego completar la fórmula y confirmar.
-6. **Consistencia eventual:** la pantalla "Recibimos tu pedido" (sincronizando) y luego aparece el detalle; mostrar el log `[projector]`.
-7. **Tiempo real:** el estado pasa solo a `APPROVED` y luego `DISPATCHED` (sin recargar), visible como frame de WebSocket.
-8. **Invariantes:** pedir más unidades que el stock (por ejemplo, Insulina Glargina Pen tiene 20) y ver `INSUFFICIENT_STOCK`; usar un número de fórmula `REJ-12345` para ver el rechazo, la cancelación y la devolución del stock.
-9. **Sandbox** (<http://localhost:4000/graphql>): mostrar el SDL y una query directa.
+
 
 ---
 
