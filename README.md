@@ -458,11 +458,20 @@ Otras piezas: máquina de estados de la orden (`PENDING_APPROVAL → APPROVED �
 
 Además: si el pedido no exige fórmula, cualquier fórmula enviada **no se almacena** (minimización de datos de salud).
 
+![Evidencia de implementación en Supabase](images/cmd.png)
+*Evidencia de implementación del schema cmd con Supabase*
+
+![Evidencia de testeo](images/vrf.png)
+*Evidencia de funcionamiento*
+
 ### 5.2 Lado de consultas (read model, schema `qry`)
 
 Los resolvers de `Query` **solo leen de `qry.*`**, tablas desnormalizadas y con índices para lectura: `qry.medications` (categoría y laboratorio como dimensiones, texto normalizado sin tildes con índices trigram GIN, estado de stock precalculado), `qry.order_views`, `qry.order_item_views`, `qry.order_status_history`, `qry.prescription_views`.
 
 El catálogo se proyecta desde el write model en el primer arranque; esto demuestra que el read model es **reconstruible** desde la fuente de verdad.
+
+![Evidencia de implementación en Supabase](images/qry.png)
+*Evidencia de implementación del schema qry con Supabase*
 
 ### 5.3 Consistencia eventual: qué ve el usuario
 
@@ -551,12 +560,3 @@ SQL   [sql] 0.8ms rows=8 SELECT id, name FROM qry.laboratories WHERE id = ANY($1
 - **Sin lockfile:** las imágenes usan `npm install`; genera `package-lock.json` (`npm install` local) y cámbialo a `npm ci` si necesitas builds reproducibles.
 - **Apollo Server 4:** se eligió la versión con la integración Express incluida; migrar a la 5 solo cambia el paquete de integración.
 
-## 11. Solución de problemas
-
-| Síntoma | Causa probable |
-|---|---|
-| `backend` reintenta y termina con `ENETUNREACH` / `ENOTFOUND` | Usa el **Session pooler** de Supabase en `DATABASE_URL`. |
-| `password authentication failed` | Contraseña incorrecta o sin URL-encode de caracteres especiales. |
-| `docker compose up` falla con "Falta DATABASE_URL" | No existe `.env` (cópialo desde `.env.example`). |
-| El frontend carga pero las llamadas fallan por CORS | `FRONTEND_ORIGIN` debe coincidir con el origen del navegador. |
-| Cambiaste el puerto/host del backend | Reconstruye el frontend (`docker compose build frontend`): las URLs `NEXT_PUBLIC_*` se incrustan al compilar. |
