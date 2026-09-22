@@ -527,7 +527,7 @@ SQL   [sql] 0.8ms rows=8 SELECT id, name FROM qry.laboratories WHERE id = ANY($1
 
 ## 8. Video demostrativo
 
-
+<video src="media/demostracion.mp4" controls width="100%"></video>
 
 ---
 
