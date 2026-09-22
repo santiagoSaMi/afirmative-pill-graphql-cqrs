@@ -1,5 +1,7 @@
 # Afirmative Pill
 
+**Por Santiago Sabogal Millan**
+
 Plataforma de e-commerce farmacéutico con **GraphQL de extremo a extremo (Zero-REST)** y arquitectura **CQRS**.
 Taller Práctico Avanzado, Universidad de La Sabana.
 
