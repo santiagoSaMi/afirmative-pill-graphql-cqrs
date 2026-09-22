@@ -531,6 +531,10 @@ SQL   [sql] 0.8ms rows=8 SELECT id, name FROM qry.laboratories WHERE id = ANY($1
 
 
 
+https://github.com/user-attachments/assets/60fc0868-8cbc-45f8-9682-a5e86b81d1f5
+
+
+
 ---
 
 ## 9. Estructura del repositorio
